@@ -58,7 +58,7 @@ Follow these steps to run the project locally:
 bash
 Copy
 Edit
-git clone https://github.com/your-username/pdf-ai-tutor.git
+git clone https://github.com/keerthivasan45/pdf-ai-tutor.git
 cd pdf-ai-tutor
 2. Create and Activate a Python Virtual Environment
 Windows:
