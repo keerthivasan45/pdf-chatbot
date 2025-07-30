@@ -1,4 +1,4 @@
-# --- PDF Chatbot Backend (with Chat History) ---
+# --- PDF Chatbot Backend (with Memory Optimization) ---
 # This script manages multiple, persistent chat sessions.
 
 import os
@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import json
 import uuid
 import datetime
+import tempfile # For handling temporary files efficiently
 
 # --- 1. Configuration and Setup ---
 
@@ -45,15 +46,15 @@ except Exception as e:
 
 # --- 2. Helper Functions ---
 
-def extract_pdf_text(pdf_file_bytes):
-    """Extracts text from PDF content in bytes."""
+def extract_pdf_text_from_path(pdf_path):
+    """Extracts text from a PDF file located at a given path."""
     try:
-        pdf_document = fitz.open(stream=pdf_file_bytes, filetype="pdf")
+        pdf_document = fitz.open(pdf_path)
         text = "".join(page.get_text() for page in pdf_document)
         pdf_document.close()
         return text
     except Exception as e:
-        print(f"CRITICAL ERROR during PDF text extraction: {e}")
+        print(f"CRITICAL ERROR during PDF text extraction from path: {e}")
         return None
 
 def get_gemini_response_stream(chat_history, user_question, pdf_text):
@@ -88,6 +89,7 @@ def index():
 # --- User Authentication Routes ---
 @app.route('/api/register', methods=['POST'])
 def register():
+    # ... (code remains the same)
     print("Received request for /api/register")
     try:
         data = request.get_json()
@@ -114,6 +116,7 @@ def register():
 
 @app.route('/api/login', methods=['POST'])
 def login():
+    # ... (code remains the same)
     print("Received request for /api/login")
     try:
         data = request.get_json()
@@ -136,6 +139,7 @@ def login():
 # --- Chat Routes ---
 @app.route('/api/chats', methods=['GET'])
 def get_chat_list():
+    # ... (code remains the same)
     user_id = request.args.get('user_id')
     if not user_id: return jsonify({"error": "User ID is required."}), 400
     try:
@@ -146,9 +150,9 @@ def get_chat_list():
         print(f"Error fetching chats for user {user_id}: {e}")
         return jsonify({"error": "Could not retrieve chat list."}), 500
 
-# --- FIX: Re-added DELETE route for clearing all chats ---
 @app.route('/api/chats', methods=['DELETE'])
 def delete_all_chats():
+    # ... (code remains the same)
     user_id = request.args.get('user_id')
     if not user_id:
         return jsonify({"error": "User ID is required."}), 400
@@ -160,9 +164,9 @@ def delete_all_chats():
         print(f"Error deleting all chats for user {user_id}: {e}")
         return jsonify({"error": "Failed to delete all chats."}), 500
 
-# --- FIX: Re-added DELETE method to this route for single chat deletion ---
 @app.route('/api/chat/<chat_id>', methods=['GET', 'DELETE'])
 def handle_single_chat(chat_id):
+    # ... (code remains the same)
     if request.method == 'GET':
         try:
             chat = chats_collection.find_one({"_id": ObjectId(chat_id)})
@@ -196,9 +200,20 @@ def handle_chat():
 
         if not chat_id or chat_id == 'null':
             if 'pdf_file' not in request.files: return jsonify({"error": "A PDF file is required for a new chat."}), 400
+            
             file = request.files['pdf_file']
-            file_content = file.read()
-            pdf_text = extract_pdf_text(file_content)
+            
+            # --- MEMORY OPTIMIZATION ---
+            # Save the file to a temporary location on disk instead of loading into RAM
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                file.save(temp_file.name)
+                temp_file_path = temp_file.name
+            
+            pdf_text = extract_pdf_text_from_path(temp_file_path)
+            
+            # Clean up the temporary file
+            os.remove(temp_file_path)
+
             if pdf_text is None: return jsonify({"error": "Failed to read PDF."}), 500
 
             new_chat = {"user_id": user_id, "title": user_question[:40] + "...", "timestamp": datetime.datetime.now(datetime.timezone.utc), "pdf_text": pdf_text, "history": []}
