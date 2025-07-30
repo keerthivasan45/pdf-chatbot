@@ -1,0 +1,9 @@
+Flask
+google-generativeai
+PyMuPDF
+python-dotenv
+markdown
+pymongo
+flask-bcrypt
+flask-cors
+gunicorn
