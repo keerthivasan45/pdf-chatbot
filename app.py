@@ -1,4 +1,4 @@
-# --- PDF Chatbot Backend (with Enhanced Logging) ---
+# --- PDF Chatbot Backend (with Chat History) ---
 # This script manages multiple, persistent chat sessions.
 
 import os
@@ -38,16 +38,10 @@ try:
     db = client.pdf_tutor_pro 
     users_collection = db.users
     chats_collection = db.chats
-    # The ismaster command is cheap and does not require auth.
     client.admin.command('ismaster')
     print("Successfully connected to MongoDB.")
 except Exception as e:
     print(f"CRITICAL: Error connecting to MongoDB: {e}")
-
-basedir = os.path.abspath(os.path.dirname(__file__))
-CHAT_SESSIONS_DIR = os.path.join(basedir, "chat_sessions")
-if not os.path.exists(CHAT_SESSIONS_DIR):
-    os.makedirs(CHAT_SESSIONS_DIR)
 
 # --- 2. Helper Functions ---
 
@@ -91,6 +85,7 @@ def get_gemini_response_stream(chat_history, user_question, pdf_text):
 def index():
     return render_template('index.html')
 
+# --- User Authentication Routes ---
 @app.route('/api/register', methods=['POST'])
 def register():
     print("Received request for /api/register")
@@ -102,20 +97,17 @@ def register():
         if not username or not password:
             return jsonify({"error": "Username and password are required."}), 400
 
-        print(f"Checking if user '{username}' exists...")
         if users_collection.find_one({"username": username}):
-            print(f"User '{username}' already exists.")
             return jsonify({"error": "Username already exists."}), 409
-        print(f"User '{username}' does not exist. Proceeding with registration.")
 
         hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-        users_collection.insert_one({
+        user_id = users_collection.insert_one({
             "username": username,
             "password": hashed_password,
             "created_at": datetime.datetime.now(datetime.timezone.utc)
-        })
-        print(f"Successfully registered user '{username}'.")
-        return jsonify({"message": "User registered successfully."}), 201
+        }).inserted_id
+        
+        return jsonify({"message": "User registered successfully.", "user_id": str(user_id)}), 201
     except Exception as e:
         print(f"ERROR in /api/register: {e}")
         return jsonify({"error": "Server error during registration."}), 500
@@ -131,14 +123,11 @@ def login():
         if not username or not password:
             return jsonify({"error": "Username and password are required."}), 400
 
-        print(f"Attempting to log in user '{username}'...")
         user = users_collection.find_one({"username": username})
 
         if user and bcrypt.check_password_hash(user['password'], password):
-            print(f"Login successful for user '{username}'.")
             return jsonify({"message": "Login successful.", "user_id": str(user['_id'])}), 200
         
-        print(f"Invalid credentials for user '{username}'.")
         return jsonify({"error": "Invalid username or password."}), 401
     except Exception as e:
         print(f"ERROR in /api/login: {e}")
@@ -156,6 +145,44 @@ def get_chat_list():
     except Exception as e:
         print(f"Error fetching chats for user {user_id}: {e}")
         return jsonify({"error": "Could not retrieve chat list."}), 500
+
+# --- FIX: Re-added DELETE route for clearing all chats ---
+@app.route('/api/chats', methods=['DELETE'])
+def delete_all_chats():
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({"error": "User ID is required."}), 400
+    try:
+        result = chats_collection.delete_many({"user_id": user_id})
+        print(f"Deleted {result.deleted_count} chats for user {user_id}.")
+        return jsonify({"message": "All chats deleted."}), 200
+    except Exception as e:
+        print(f"Error deleting all chats for user {user_id}: {e}")
+        return jsonify({"error": "Failed to delete all chats."}), 500
+
+# --- FIX: Re-added DELETE method to this route for single chat deletion ---
+@app.route('/api/chat/<chat_id>', methods=['GET', 'DELETE'])
+def handle_single_chat(chat_id):
+    if request.method == 'GET':
+        try:
+            chat = chats_collection.find_one({"_id": ObjectId(chat_id)})
+            if chat:
+                chat['_id'] = str(chat['_id'])
+                return jsonify(chat)
+            return jsonify({"error": "Chat not found"}), 404
+        except Exception as e:
+            print(f"Error fetching single chat {chat_id}: {e}")
+            return jsonify({"error": "Invalid chat ID."}), 400
+
+    if request.method == 'DELETE':
+        try:
+            result = chats_collection.delete_one({"_id": ObjectId(chat_id)})
+            if result.deleted_count > 0:
+                return jsonify({"message": "Chat deleted successfully."}), 200
+            return jsonify({"error": "Chat not found"}), 404
+        except Exception as e:
+            print(f"Error deleting single chat {chat_id}: {e}")
+            return jsonify({"error": "Failed to delete chat."}), 500
 
 @app.route('/api/chat', methods=['POST'])
 def handle_chat():
