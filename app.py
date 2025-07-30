@@ -1,8 +1,9 @@
-# --- PDF Chatbot Backend (with Memory Optimization) ---
+# --- PDF Chatbot Backend (with Timeout & Error Handling) ---
 # This script manages multiple, persistent chat sessions.
 
 import os
 import google.generativeai as genai
+from google.api_core import exceptions # Import the exceptions module
 import fitz  # PyMuPDF
 from flask import Flask, request, Response, render_template, jsonify
 from flask_cors import CORS
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 import json
 import uuid
 import datetime
-import tempfile # For handling temporary files efficiently
+import tempfile
 
 # --- 1. Configuration and Setup ---
 
@@ -76,8 +77,12 @@ def get_gemini_response_stream(chat_history, user_question, pdf_text):
             if chunk.text:
                 yield f"data: {json.dumps({'text': chunk.text})}\n\n"
 
+    # --- FIX: Gracefully handle when the Google API is temporarily overloaded ---
+    except exceptions.ServiceUnavailable as e:
+        print(f"\n--- GEMINI API 503 ERROR ---: {e}\n")
+        yield f"data: {json.dumps({'error': 'The AI model is currently overloaded. Please try your request again in a moment.'})}\n\n"
     except Exception as e:
-        print(f"\n--- GEMINI API ERROR ---: {e}\n")
+        print(f"\n--- GEMINI API GENERIC ERROR ---: {e}\n")
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 # --- 3. API Routes ---
@@ -203,15 +208,12 @@ def handle_chat():
             
             file = request.files['pdf_file']
             
-            # --- MEMORY OPTIMIZATION ---
-            # Save the file to a temporary location on disk instead of loading into RAM
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
                 file.save(temp_file.name)
                 temp_file_path = temp_file.name
             
             pdf_text = extract_pdf_text_from_path(temp_file_path)
             
-            # Clean up the temporary file
             os.remove(temp_file_path)
 
             if pdf_text is None: return jsonify({"error": "Failed to read PDF."}), 500
